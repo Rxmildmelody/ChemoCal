@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Chemo Calculator </title>
+    <title>Clinical Calculator (BSA, CrCl, Dose & Carboplatin)</title>
     <script src="https://cdn.jsdelivr.net/npm/@tailwindcss/browser@4"></script>
     <style>
         body { font-family: 'Helvetica Neue', Arial, sans-serif; }
@@ -91,7 +91,7 @@
                     <div class="space-y-4 border-t md:border-t-0 md:border-l md:pl-6 border-gray-200">
                         <h3 class="font-medium text-sm text-gray-500 uppercase">ขนาดยาที่สั่งจ่ายจริง (Actual Administered)</h3>
                         <div>
-                            <label class="block text-sm font-medium text-gray-700 mb-1">ขนาดยาที่ให้จริง (Actual Dose ในกล่อง/ที่ผสมจริง) (mg)</label>
+                            <label class="block text-sm font-medium text-gray-700 mb-1">ขนาดยาที่ให้จริง (Actual Dose) (mg)</label>
                             <input type="number" id="actual-dose" class="w-full border rounded-lg p-2.5 bg-yellow-50 border-yellow-300 focus:ring-2 focus:ring-yellow-500" placeholder="เช่น 300" oninput="calculateDose()">
                         </div>
                         
@@ -118,14 +118,30 @@
                 </h2>
                 
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div>
-                        <label class="block text-sm font-medium text-amber-900 mb-1">Target AUC ที่ต้องการ</label>
-                        <input type="number" step="0.5" id="target-auc" class="w-full border border-amber-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 bg-white" placeholder="เช่น 5 หรือ 6" oninput="calculateCarboplatin()">
-                        <p class="text-xs text-amber-700 mt-1">*สูตรคำนวณ: Dose (mg) = Target AUC × (GFR + 25) <br> (ในที่นี้ใช้ค่า CrCl แทน GFR โดยจำกัดค่าสูงสุดไม่เกิน 125 mL/min)</p>
+                    <div class="space-y-4">
+                        <h3 class="font-medium text-sm text-amber-700 uppercase">ขนาดยาที่คำนวณตามเป้าหมาย (Calvert Formula)</h3>
+                        <div>
+                            <label class="block text-sm font-medium text-amber-900 mb-1">Target AUC ที่ต้องการ</label>
+                            <input type="number" step="0.5" id="target-auc" class="w-full border border-amber-300 rounded-lg p-2.5 focus:ring-2 focus:ring-amber-500 bg-white" placeholder="เช่น 5" oninput="calculateCarboplatin()">
+                            <p class="text-xs text-amber-700 mt-1">*สูตร: Dose (mg) = Target AUC × (GFR + 25) <br> (จำกัดค่า CrCl สูงสุดไม่เกิน 125 mL/min)</p>
+                        </div>
+                        <div class="p-4 bg-white rounded-xl border border-amber-200">
+                            <p class="text-sm text-amber-800">Carboplatin Dose ที่ควรให้ตามสูตร:</p>
+                            <p class="text-2xl font-bold text-amber-600 mt-1"><span id="res-carboplatin">-</span> mg</p>
+                        </div>
                     </div>
-                    <div class="flex flex-col justify-center items-center bg-white p-4 rounded-xl border border-amber-200 shadow-sm">
-                        <p class="text-sm font-semibold text-amber-800 uppercase tracking-wider">Carboplatin Dose ที่ต้องให้</p>
-                        <p class="text-3xl font-bold text-amber-600 mt-2"><span id="res-carboplatin">-</span> <span class="text-lg font-normal">mg</span></p>
+
+                    <div class="space-y-4 border-t md:border-t-0 md:border-l md:pl-6 border-amber-200">
+                        <h3 class="font-medium text-sm text-amber-700 uppercase">ขนาดยา Carboplatin ที่สั่งจ่ายจริง</h3>
+                        <div>
+                            <label class="block text-sm font-medium text-amber-900 mb-1">ขนาดยา Carboplatin ที่ให้จริง (mg)</label>
+                            <input type="number" id="actual-carboplatin-dose" class="w-full border border-amber-300 rounded-lg p-2.5 bg-yellow-50 focus:ring-2 focus:ring-amber-500" placeholder="เช่น 400" oninput="calculateCarboplatin()">
+                        </div>
+                        
+                        <div class="p-4 bg-white rounded-xl border border-amber-200">
+                            <p class="text-xs text-gray-500">% ความต่างของโดส Carboplatin:</p>
+                            <p class="text-xl font-bold mt-1" id="carbo-diff-wrapper"><span id="carbo-diff">-</span> %</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -138,79 +154,67 @@
     </div>
 
     <script>
+        // ตัวแปร Global ไว้แชร์ค่าระหว่างฟังก์ชัน
+        let globalBsa = 0;
+        let globalCrcl = 0;
+        let globalTargetCarboDose = 0;
+
         function calculateAll() {
-            // ดึงค่าจากฟอร์มพื้นฐาน
             const gender = document.getElementById('gender').value;
             const age = parseFloat(document.getElementById('age').value);
             const weight = parseFloat(document.getElementById('weight').value);
             const height = parseFloat(document.getElementById('height').value);
             const scr = parseFloat(document.getElementById('scr').value);
 
-            let bsa = 0;
-            let crcl = 0;
-
-            // 1. คำนวณ BSA (DuBois formula: BSA = 0.007184 × W^0.425 × H^0.725)
+            // 1. คำนวณ BSA
             if (weight > 0 && height > 0) {
-                bsa = 0.007184 * Math.pow(weight, 0.425) * Math.pow(height, 0.725);
-                document.getElementById('res-bsa').innerText = bsa.toFixed(2);
+                globalBsa = 0.007184 * Math.pow(weight, 0.425) * Math.pow(height, 0.725);
+                document.getElementById('res-bsa').innerText = globalBsa.toFixed(2);
             } else {
+                globalBsa = 0;
                 document.getElementById('res-bsa').innerText = "-";
             }
 
-            // 2. คำนวณ CrCl (Cockcroft-Gault)
+            // 2. คำนวณ CrCl
             if (age > 0 && weight > 0 && scr > 0) {
-                crcl = ((140 - age) * weight) / (72 * scr);
+                globalCrcl = ((140 - age) * weight) / (72 * scr);
                 if (gender === 'female') {
-                    crcl *= 0.85;
+                    globalCrcl *= 0.85;
                 }
-                document.getElementById('res-crcl').innerText = crcl.toFixed(1);
+                document.getElementById('res-crcl').innerText = globalCrcl.toFixed(1);
             } else {
+                globalCrcl = 0;
                 document.getElementById('res-crcl').innerText = "-";
             }
 
-            // รันฟังก์ชันคำนวณในส่วนที่เหลือต่อพ่วงไปด้วยกัน
-            calculateDose(bsa);
-            calculateCarboplatin(crcl);
+            // รันฟังก์ชันคำนวณย่อยต่อพ่วงไป
+            calculateDose();
+            calculateCarboplatin();
         }
 
-        function calculateDose(passedBsa) {
-            // ถ้ารันแยก ให้ดึงค่า BSA ใหม่
-            let bsa = passedBsa;
-            if (!bsa) {
-                const weight = parseFloat(document.getElementById('weight').value);
-                const height = parseFloat(document.getElementById('height').value);
-                if (weight > 0 && height > 0) {
-                    bsa = 0.007184 * Math.pow(weight, 0.425) * Math.pow(height, 0.725);
-                }
-            }
-
+        function calculateDose() {
             const regimenDose = parseFloat(document.getElementById('regimen-dose').value);
             const actualDose = parseFloat(document.getElementById('actual-dose').value);
-
             let targetDose = 0;
 
-            // คำนวณหา Target Dose ตามพื้นที่ผิว
-            if (bsa > 0 && regimenDose > 0) {
-                targetDose = regimenDose * bsa;
+            if (globalBsa > 0 && regimenDose > 0) {
+                targetDose = regimenDose * globalBsa;
                 document.getElementById('target-dose').innerText = targetDose.toFixed(1);
             } else {
                 document.getElementById('target-dose').innerText = "-";
             }
 
-            // คำนวณ Actual mg/m2 และ % ความต่าง
-            if (bsa > 0 && actualDose > 0) {
-                const actualMgM2 = actualDose / bsa;
+            if (globalBsa > 0 && actualDose > 0) {
+                const actualMgM2 = actualDose / globalBsa;
                 document.getElementById('actual-mg-m2').innerText = actualMgM2.toFixed(1);
 
                 if (targetDose > 0) {
-                    // สูตรคำนวณ %ความต่าง: ((Actual - Target) / Target) * 100
                     const diffPercent = ((actualDose - targetDose) / targetDose) * 100;
                     const diffText = (diffPercent >= 0 ? "+" : "") + diffPercent.toFixed(1);
                     
                     const wrapper = document.getElementById('dose-diff-wrapper');
                     document.getElementById('dose-diff').innerText = diffText;
 
-                    // ถ้าต่างกันเกิน +/- 10% ให้แสดงสีแดงเตือนความเบี่ยงเบน
                     if (Math.abs(diffPercent) > 10) {
                         wrapper.className = "text-base font-semibold mt-0.5 text-red-600";
                     } else {
@@ -224,28 +228,37 @@
             }
         }
 
-        function calculateCarboplatin(passedCrcl) {
-            let crcl = passedCrcl;
-            if (crcl === undefined) {
-                const gender = document.getElementById('gender').value;
-                const age = parseFloat(document.getElementById('age').value);
-                const weight = parseFloat(document.getElementById('weight').value);
-                const scr = parseFloat(document.getElementById('scr').value);
-                if (age > 0 && weight > 0 && scr > 0) {
-                    crcl = ((140 - age) * weight) / (72 * scr);
-                    if (gender === 'female') crcl *= 0.85;
-                }
+        function calculateCarboplatin() {
+            const targetAuc = parseFloat(document.getElementById('target-auc').value);
+            const actualCarboDose = parseFloat(document.getElementById('actual-carboplatin-dose').value);
+
+            // คำนวณหา Target Carboplatin Dose
+            if (globalCrcl > 0 && targetAuc > 0) {
+                const cappedCrcl = Math.min(globalCrcl, 125); // Cap 125 ตามมาตรฐานสากล
+                globalTargetCarboDose = targetAuc * (cappedCrcl + 25);
+                document.getElementById('res-carboplatin').innerText = Math.round(globalTargetCarboDose);
+            } else {
+                globalTargetCarboDose = 0;
+                document.getElementById('res-carboplatin').innerText = "-";
             }
 
-            const targetAuc = parseFloat(document.getElementById('target-auc').value);
+            // คำนวณ %ความต่างของ Carboplatin
+            if (globalTargetCarboDose > 0 && actualCarboDose > 0) {
+                const carboDiffPercent = ((actualCarboDose - globalTargetCarboDose) / globalTargetCarboDose) * 100;
+                const carboDiffText = (carboDiffPercent >= 0 ? "+" : "") + carboDiffPercent.toFixed(1);
+                
+                const carboWrapper = document.getElementById('carbo-diff-wrapper');
+                document.getElementById('carbo-diff').innerText = carboDiffText;
 
-            if (crcl > 0 && targetAuc > 0) {
-                // ตามแนวทางสากล (FDA) Cap ค่า GFR (CrCl) ไว้ไม่เกิน 125 mL/min เพื่อป้องกัน Overdose ในคนที่ไตทำงานดีมากๆ
-                const cappedCrcl = Math.min(crcl, 125);
-                const carboDose = targetAuc * (cappedCrcl + 25);
-                document.getElementById('res-carboplatin').innerText = Math.round(carboDose);
+                // ตรวจสอบความเบี่ยงเบนเดสเกิน +/- 10% หรือไม่
+                if (Math.abs(carboDiffPercent) > 10) {
+                    carboWrapper.className = "text-xl font-bold mt-1 text-red-600";
+                } else {
+                    carboWrapper.className = "text-xl font-bold mt-1 text-green-600";
+                }
             } else {
-                document.getElementById('res-carboplatin').innerText = "-";
+                document.getElementById('carbo-diff').innerText = "-";
+                document.getElementById('carbo-diff-wrapper').className = "text-xl font-bold mt-1 text-gray-800";
             }
         }
     </script>
